@@ -1,0 +1,70 @@
+\documentclass[]{article}
+
+% ----------------------------------------------------------------------------------------
+% -- Imports
+% ----------------------------------------------------------------------------------------
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{lastpage}
+\usepackage[a4paper, left=2cm, right=2cm, top=2.5cm, bottom=3cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{colortbl}
+\usepackage{fancyvrb}
+\usepackage{pdfpages}
+\usepackage{minted}
+\usepackage{xcolor} % to access the named colour LightGray
+\usepackage{listings}
+\usepackage{amsmath}
+\definecolor{LightGray}{gray}{0.96}
+
+\definecolor{Gray}{gray}{0.9}
+\usemintedstyle{igor}
+\newmintedfile{c}{bgcolor=LightGray,tabsize=2,framesep=0.2cm,frame=leftline,linenos,fontsize=\small, breaklines}
+\newmintedfile{cpp}{bgcolor=LightGray,tabsize=2,framesep=0.2cm,frame=leftline,linenos,fontsize=\small, breaklines}
+\newmintedfile{java}{bgcolor=LightGray,tabsize=2,framesep=0.2cm,frame=leftline,linenos,fontsize=\small, breaklines, }
+
+% ----------------------------------------------------------------------------------------
+% -- Header & Footer
+% ----------------------------------------------------------------------------------------
+\pagestyle{fancy}
+\setlength\headheight{39pt} 
+
+% Header
+\lhead{\leftmark}
+\chead{}
+\renewcommand{\headrulewidth}{0.1pt} %obere Trennlinie
+
+% Footer
+\lfoot{Universidad de Malaga $|$ Semester 1}
+\cfoot{}
+\rfoot{Seite \thepage / \pageref{LastPage}}
+\renewcommand{\footrulewidth}{0.1pt} %untere Trennlinie
+
+
+% ----------------------------------------------------------------------------------------
+% -- Begin of the document
+% ----------------------------------------------------------------------------------------
+\begin{document}
+\include{highlighting}
+
+% Titelpage (--> hier die Angabe)
+\begin{titlepage}
+	\title{Big Data - Parking data analysis} 
+	\author{David Hartl, Manzo Vincenzo} 
+	\date{\today} 
+	\maketitle
+	\thispagestyle{empty}
+	\newpage
+\end{titlepage}
+
+% Table of Contents (--> für die Abgabe kein Table of Contentes)
+%\tableofcontents
+%\thispagestyle{empty}
+%\newpage
+
+% Content
+\include{sections/Nr1}
+
+\end{document}

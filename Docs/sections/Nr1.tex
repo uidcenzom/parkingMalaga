@@ -1,0 +1,81 @@
+\section{Assignment}
+\subsection{Task 1}
+Task 1 required to develop a Python program, that streams parking information every 
+minute and display the parking code and available spaces.
+
+\subsection{Task 2}
+The second Task was to extend the Program, with additional processing, which are defined by the student (Example: display only parking facilities that have changed in the last 5 minutes, display a graph showing the evolution of the number of available parking spaces, etc.) \\
+
+\noindent For this project, we chose to implement the following additional processing features:
+\begin{itemize}
+    \item A change-detection filter that prints a message to the console only for parking facilities that have reported a new number of available spaces.
+    \item A real-time line graph, saved to an interactive HTML file, that visualizes the evolution of free spaces for all parking facilities over the last 5 minutes.
+\end{itemize}
+
+\section{Solution}
+\subsection{Task 1}
+Before the downloader is initialized, the program first cleans the input directory by removing any existing old files in the \texttt{data/input/} folder. After that, the \texttt{downloader} function is started in a background thread. This thread requests the parking data every minute. If the download is successful (no timeout and a 200 status code), the data is first saved to a temporary file (e.g., \texttt{tmp\_parking\_12345.csv}). This file is then immediately renamed to its final, timestamped name (e.g., \texttt{parking\_20251106\_214900.csv}). This two-step process ensures that Spark's streaming query only sees a complete, fully-written file, which prevents processing errors. \\ \\
+In the main thread, the program has two streams:
+\begin{itemize}
+    \item \textbf{streamDF}: This is the input stream that reads the CSV data. It is configured as follows:
+    \begin{itemize}
+        \item \texttt{option("header", True)}: Specifies that the CSV files contain a header row.
+        \item \texttt{schema(CSV\_SCHEMA)}: Applies the predefined schema to the incoming data.
+        \item \texttt{csv(INPUT\_DIR)}: Sets the monitored directory to \texttt{data/input/}.
+        \item \texttt{select("id", "libres")}: Selects only the \texttt{id} and \texttt{libres} columns for processing.
+    \end{itemize}
+    \item \textbf{query\_console}: The output stream, uses \texttt{streamDF} as input and writes the data to the console. The configuration looks as follows:
+    \begin{itemize}
+        \item \texttt{format("console")}: Output format is console.
+        \item \texttt{outputMode("append")}: New rows are appended to the result table.
+        \item \texttt{Option("truncate", "false"):} Do not truncate the output.
+        \item \texttt{trigger(processingTime=f"{PERIOD} seconds")}: Process the data every 60 seconds.
+    \end{itemize}
+\end{itemize}
+This final \texttt{try...except...finally} block manages the application's lifecycle by using \texttt{spark.streams.awaitAnyTermination()} to keep the main thread alive, catching a \texttt{KeyboardInterrupt} (like \texttt{Ctrl+C}) to exit, and then executing the \texttt{finally} block to guarantee a clean shutdown of both streaming queries and the Spark session.
+
+\subsection{Task 2}
+The optional second task is fulfilled by a second, parallel \texttt{writeStream} which processes the same \texttt{streamDF} input. This stream is responsible for the custom analysis and visualization.
+
+\begin{itemize}
+    \item \textbf{query\_analysis}: This output stream uses \texttt{streamDF} as input and sends each micro-batch to a custom processing function. The configuration is as follows:
+    \begin{itemize}
+        \item \texttt{foreachBatch(analyze\_batch)}: Instead of writing to the console, this stream's format sends the entire batch DataFrame (and its batch ID) to the \texttt{analyze\_batch} function.
+        \item \texttt{outputMode("append")}: New rows are processed.
+        \item \texttt{trigger(processingTime=f"{PERIOD} seconds")}: Process the data every 60 seconds, just like the console stream.
+    \end{itemize}
+\end{itemize}
+
+The \texttt{analyze\_batch} function contains the two features for the optional task:
+\begin{enumerate}
+    \item \textbf{Change Detection:} A global dictionary, \texttt{last\_updates}, is used to store the last known "libres" value for each parking "id". For each row in the new batch, it compares the current value with the stored value. If the value is new or the "id" has not been seen before, it is added to a \texttt{changed} list and printed to the console.
+    
+    \item \textbf{Evolution Graph:} A global list, \texttt{history}, is used to store all incoming data points as tuples containing the current timestamp, parking "id", and "libres" count.
+    \begin{itemize}
+        \item At the beginning of each batch, new data is appended to this \texttt{history} list.
+        \item A \texttt{cutoff} variable is calculated by subtracting 5 minutes from the current time.
+        \item The \texttt{history} list is then filtered to remove any entries older than this 5-minute cutoff.
+        \item Finally, the \texttt{plot\_history\_plotty()} function is called.
+    \end{itemize}
+\end{enumerate}
+
+\section{Execution Screenshots}
+To demonstrate the program, we ran the \texttt{StreamingParkingMalaga.py} script in a terminal. The following screenshots show the program in action.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\textwidth]{./img/terminal.png}
+  \caption{Live console output showing both streaming queries.}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./img/terminal_2.png}
+    \caption{Console output showing parking facilities with changed free spaces in the last minute.}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./img/plotly.png}
+    \caption{The generated \texttt{parking\_plot\_live.html} showing the 5-minute evolution of free spaces.}
+\end{figure}
