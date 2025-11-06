@@ -9,25 +9,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-
-# HADOOP / WINUTILS CONFIGURATION
-HADOOP_HOME = r"C:/hadoop/hadoop-3.2.2"
-WINUTILS_BIN = r"C:/hadoop/hadoop-3.2.2/bin"
-
-# Set environment variables
-os.environ["HADOOP_HOME"] = HADOOP_HOME
-os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + WINUTILS_BIN
-os.environ["JAVA_TOOL_OPTIONS"] = "-Dorg.apache.hadoop.io.nativeio.NativeIO.disable=true"
-
-# Allow Python (3.8+) to load Hadoop DLLs
-try:
-    os.add_dll_directory(WINUTILS_BIN)
-except Exception:
-    pass
-
+import plotly.graph_objects as go
 
 # STREAMING CONFIGURATION
 DATA_URL = "https://datosabiertos.malaga.eu/recursos/aparcamientos/ocupappublicosmun/ocupappublicosmun.csv"
@@ -45,6 +27,44 @@ CSV_SCHEMA = StructType([
 # Temporary state for variation analysis
 last_updates = {}
 history = []
+
+# Windows environment setup
+def setup_windows_environment():
+    """Configures environment variables and Spark options for Windows"""
+    if os.name != 'nt':
+        print("Skipping Windows-specific setup (not on Windows).")
+        return {}  # Return an empty dictionary if not on Windows
+
+    print("Applying Windows/Hadoop environment setup...")
+
+    # Define paths inside the function
+    HADOOP_HOME = r"C:/hadoop/hadoop-3.2.2"
+    WINUTILS_BIN = r"C:/hadoop/hadoop-3.2.2/bin"
+
+    # Set environment variables
+    os.environ["HADOOP_HOME"] = HADOOP_HOME
+    os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + WINUTILS_BIN
+    os.environ["JAVA_TOOL_OPTIONS"] = "-Dorg.apache.hadoop.io.nativeio.NativeIO.disable=true"
+
+    try:
+        os.add_dll_directory(WINUTILS_BIN)
+    except Exception:
+        print("Note: os.add_dll_directory not available (likely Python < 3.8).")
+        pass
+
+    extra_java = (
+        f"-Dhadoop.home.dir={HADOOP_HOME} "
+        f"-Djava.library.path={WINUTILS_BIN} "
+        f"-Dorg.apache.hadoop.io.nativeio.NativeIO.disable=true"
+    )
+
+    return {
+        "spark.hadoop.io.nativeio.NativeIO.disable": "true",
+        "spark.hadoop.fs.file.impl": "org.apache.hadoop.fs.LocalFileSystem",
+        "spark.hadoop.fs.AbstractFileSystem.file.impl": "org.apache.hadoop.fs.local.LocalFs",
+        "spark.driver.extraJavaOptions": extra_java,
+        "spark.executor.extraJavaOptions": extra_java
+    }
 
 
 # DOWNLOADER FUNCTION
@@ -69,9 +89,7 @@ def downloader():
 
         time.sleep(PERIOD)
 
-
-# OPTIONAL: LINE PLOT
-def plot_history():
+def plot_history_plotty():
     """Displays the evolution of free parking spots over the last 5 minutes."""
     if not history:
         return
@@ -80,24 +98,34 @@ def plot_history():
         df = pd.DataFrame(history, columns=["timestamp", "id", "libres"])
         df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-        plt.figure(figsize=(8, 4))
+        fig = go.Figure()
+
         for pid in sorted(df["id"].unique()):
             sub = df[df["id"] == pid]
-            plt.plot(sub["timestamp"], sub["libres"], marker="o", linewidth=1.2, label=pid)
+            fig.add_trace(go.Scatter(
+                x=sub["timestamp"],
+                y=sub["libres"],
+                mode='lines+markers',
+                name=pid,
+                line=dict(width=2),
+                marker=dict(size=6)
+            ))
 
-        plt.title("Evolution of free parking spaces (last 5 minutes)")
-        plt.xlabel("Time")
-        plt.ylabel("Free spaces")
+        fig.update_layout(
+            title="Evolution of free parking spaces (last 5 minutes)",
+            xaxis_title="Time",
+            yaxis_title="Free spaces",
+            hovermode='x unified',
+            template="plotly_white",
+            height=500,
+            showlegend=True,
+            xaxis=dict(tickformat='%H:%M')  # Add tickformat here
+        )
 
-        ax = plt.gca()
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-
-        plt.grid(True, linestyle="--", alpha=0.5)
-        plt.legend(fontsize=8)
-        plt.tight_layout()
-        plt.show(block=False)
-        plt.pause(0.1)
-        plt.close()
+        # Save as interactive HTML file
+        plot_path = os.path.join(BASE_DIR, "parking_plot_live.html")
+        fig.write_html(plot_path, auto_open=False)
+        print(f"Interactive plot saved to: {plot_path}")
 
     except Exception as e:
         print(f"Plot error: {e}")
@@ -121,12 +149,12 @@ def analyze_batch(df, batch_id):
         if pid is None or libres is None:
             continue
 
+        history.append((now, pid, libres))
         prev = last_updates.get(pid)
 
         if not prev or prev[0] != libres:
             changed.append((pid, libres))
             last_updates[pid] = (libres, now)
-            history.append((now, pid, libres))
 
     # Keep only the last 5 minutes of history
     cutoff = now - timedelta(minutes=5)
@@ -138,44 +166,51 @@ def analyze_batch(df, batch_id):
             print(f"   • {pid}: {libres} free spots")
     else:
         print("No changes in the last 5 minutes.")
+    plot_history_plotty()
 
-    plot_history()
+
+def setup_data_folder():
+    """Clean the input directory to prevent processing old files"""
+    print(f"Cleaning input directory for a fresh start: {INPUT_DIR}")
+    if os.path.exists(INPUT_DIR):
+        try:
+            shutil.rmtree(INPUT_DIR)
+        except Exception as e:
+            print(f"Warning: Could not clean directory. {e}")
+    os.makedirs(INPUT_DIR, exist_ok=True)
+
+
+def print_jvm_info(jvm):
+    print("hadoop.home.dir (JVM) =", jvm.java.lang.System.getProperty("hadoop.home.dir"))
+    print("java.library.path (JVM) =", jvm.java.lang.System.getProperty("java.library.path"))
+    print(f"Monitoring folder: {INPUT_DIR}")
+
+
+def createSparkSession():
+    platform_configs = setup_windows_environment()
+    builder = (
+        SparkSession.builder
+        .appName("StreamingParkingMalaga")
+        .master("local[*]")
+        .config("spark.sql.streaming.schemaInference", "true")
+    )
+    for key, value in platform_configs.items():
+        builder = builder.config(key, value)
+
+    return builder.getOrCreate()
 
 
 # MAIN
 def main():
     print("Starting StreamingParkingMalaga...")
-    os.makedirs(INPUT_DIR, exist_ok=True)
+    setup_data_folder()
 
     # Start downloader in background thread
     threading.Thread(target=downloader, daemon=True).start()
 
-    # Extra Java options for Spark (fix for NativeIO on Windows)
-    extra_java = (
-        f"-Dhadoop.home.dir={HADOOP_HOME} "
-        f"-Djava.library.path={WINUTILS_BIN} "
-        f"-Dorg.apache.hadoop.io.nativeio.NativeIO.disable=true"
-    )
+    spark = createSparkSession()
 
-    # Spark session for Windows
-    spark = (
-        SparkSession.builder
-        .appName("StreamingParkingMalaga")
-        .master("local[*]")
-        .config("spark.hadoop.io.nativeio.NativeIO.disable", "true")
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.LocalFs")
-        .config("spark.driver.extraJavaOptions", extra_java)
-        .config("spark.executor.extraJavaOptions", extra_java)
-        .config("spark.sql.streaming.schemaInference", "true")
-        .getOrCreate()
-    )
-
-    # JVM debug
-    jvm = spark._jvm
-    print("hadoop.home.dir (JVM) =", jvm.java.lang.System.getProperty("hadoop.home.dir"))
-    print("java.library.path (JVM) =", jvm.java.lang.System.getProperty("java.library.path"))
-    print(f"Monitoring folder: {INPUT_DIR}")
+    print_jvm_info(spark._jvm)
 
     # STREAM READING
     streamDF = (
@@ -206,8 +241,7 @@ def main():
     )
 
     try:
-        query_console.awaitTermination()
-        query_analysis.awaitTermination()
+        spark.streams.awaitAnyTermination()
     except KeyboardInterrupt:
         pass
     finally:
@@ -220,7 +254,6 @@ def main():
         except Exception:
             pass
         spark.stop()
-
 
 # ENTRY POINT
 if __name__ == "__main__":
